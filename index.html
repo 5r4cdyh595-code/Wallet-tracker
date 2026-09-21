@@ -226,6 +226,25 @@
     flex-wrap:wrap;
   }
 
+  .entry-moves{
+    font-family:var(--mono);
+    font-size:0.78rem;
+    margin-top:8px;
+    padding-top:8px;
+    border-top:1px dashed var(--line);
+    display:flex;
+    gap:8px;
+    flex-wrap:wrap;
+    align-items:center;
+  }
+  .move{padding:2px 0;}
+  .move.bought{color:var(--signal-ok);}
+  .move.sold{color:var(--signal-err);}
+  .move-sep{color:var(--paper-dim);font-style:italic;}
+  .move-none, .move-pending{color:var(--paper-dim);}
+  .move-link{color:inherit;text-decoration:none;border-bottom:1px dotted currentColor;}
+  .move-link:hover{border-bottom-style:solid;}
+
   .empty{
     font-family:var(--mono);
     font-size:0.82rem;
@@ -290,10 +309,11 @@
       <button id="startBtn">Start watching</button>
       <button id="stopBtn" class="ghost" disabled>Stop</button>
       <button id="refreshBtn" class="ghost">Refresh now</button>
-      <span class="interval-label">checks every <select id="interval" style="width:auto;display:inline-block;padding:4px 8px;"><option value="10000">10s</option><option value="15000" selected>15s</option><option value="30000">30s</option><option value="60000">60s</option></select></span>
+      <span class="interval-label">checks every <select id="interval" style="width:auto;display:inline-block;padding:4px 8px;"><option value="5000">5s</option><option value="10000" selected>10s</option><option value="15000">15s</option><option value="30000">30s</option><option value="60000">60s</option></select></span>
     </div>
 
     <div class="balance-line" id="balanceLine">Balance: —</div>
+    <div class="balance-line" style="margin-top:8px;padding-top:0;border-top:none;">Below 10s, public nodes will likely throttle you — a free personal RPC key (Helius/QuickNode/Ankr) holds up much better at high frequency.</div>
   </div>
 
   <div class="status-msg" id="statusMsg"></div>
@@ -308,9 +328,10 @@
   </div>
 
   <footer>
-    "Auto" tries a few public Solana JSON-RPC nodes in order and sticks with whichever answers, since any single public node can be slow, down, or rate-limited at a given moment.
-    If all of them fail from your network, switch to a personal RPC endpoint (Helius, QuickNode, Ankr, Alchemy, etc.) above — free tiers work fine for polling one address.
-    Signatures link out to Solscan for full transaction detail. This page is a local diagnostic tool, not financial advice.
+    Each transaction's "what changed" line is decoded from the wallet's own before/after SOL and token balances — it shows what the address actually gained or gave up, not a marketing label like "swap" or "buy."
+    Token amounts show as a short mint address rather than a name/symbol, since that needs an extra token-list lookup this page doesn't do; tap it to see the full token on Solscan.
+    "Auto" tries a few public Solana JSON-RPC nodes in order and sticks with whichever answers. If everything fails or updates lag, switch to a personal RPC endpoint (Helius, QuickNode, Ankr, Alchemy, etc.) above — free tiers handle frequent polling far better than the shared public nodes.
+    This page is a local diagnostic tool reading public on-chain data, not financial advice.
   </footer>
 
 </div>
@@ -391,6 +412,77 @@
     return d.toLocaleString(undefined, {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit', second:'2-digit'});
   }
 
+  function shortMint(mint){
+    return mint.slice(0,4) + '…' + mint.slice(-4);
+  }
+
+  const WSOL_MINT = 'So11111111111111111111111111111111111111112';
+
+  // Decode what a wallet's balances did across a parsed transaction: SOL delta
+  // plus per-token deltas (from preTokenBalances/postTokenBalances). Best-effort —
+  // Solana has no single canonical "buy" event, this reads it from net balance change.
+  function decodeSwap(tx, addr){
+    if (!tx || !tx.meta || tx.meta.err) return null;
+    const keys = tx.transaction.message.accountKeys.map(k => (typeof k === 'string' ? k : k.pubkey));
+    const idx = keys.indexOf(addr);
+
+    let solDelta = 0;
+    if (idx !== -1 && tx.meta.preBalances && tx.meta.postBalances){
+      solDelta = (tx.meta.postBalances[idx] - tx.meta.preBalances[idx]) / 1e9;
+      // Ignore dust-level changes that are just network fees, not a swap leg.
+      if (Math.abs(solDelta) < 0.0002) solDelta = 0;
+    }
+
+    const tokenDeltas = {}; // mint -> {pre, post, decimals}
+    (tx.meta.preTokenBalances || []).forEach(b => {
+      if (b.owner === addr){
+        tokenDeltas[b.mint] = tokenDeltas[b.mint] || {pre:0, post:0, decimals: b.uiTokenAmount.decimals};
+        tokenDeltas[b.mint].pre = b.uiTokenAmount.uiAmount || 0;
+      }
+    });
+    (tx.meta.postTokenBalances || []).forEach(b => {
+      if (b.owner === addr){
+        tokenDeltas[b.mint] = tokenDeltas[b.mint] || {pre:0, post:0, decimals: b.uiTokenAmount.decimals};
+        tokenDeltas[b.mint].post = b.uiTokenAmount.uiAmount || 0;
+      }
+    });
+
+    const moves = [];
+    if (solDelta !== 0){
+      moves.push({label: 'SOL', delta: solDelta});
+    }
+    Object.keys(tokenDeltas).forEach(mint => {
+      if (mint === WSOL_MINT) return; // already reflected as SOL for most swap routers
+      const d = tokenDeltas[mint].post - tokenDeltas[mint].pre;
+      if (Math.abs(d) > 1e-9){
+        moves.push({label: shortMint(mint), delta: d, mint});
+      }
+    });
+
+    if (!moves.length) return null;
+    return moves;
+  }
+
+  function fmtAmount(n){
+    const abs = Math.abs(n);
+    const decimals = abs < 1 ? 6 : abs < 1000 ? 4 : 2;
+    return n.toLocaleString(undefined, {maximumFractionDigits: decimals});
+  }
+
+  function renderMoves(moves){
+    if (!moves) return '<span class="move-pending">decoding…</span>';
+    if (!moves.length) return '<span class="move-none">no balance change (program call, approval, etc.)</span>';
+    return moves.map(m => {
+      const bought = m.delta > 0;
+      const cls = bought ? 'move bought' : 'move sold';
+      const sign = bought ? '+' : '';
+      const linked = m.mint ? `<a href="https://solscan.io/token/${m.mint}" target="_blank" rel="noopener" class="move-link">${m.label}</a>` : m.label;
+      return `<span class="${cls}">${sign}${fmtAmount(m.delta)} ${linked}</span>`;
+    }).join(' <span class="move-sep">for</span> ');
+  }
+
+  const txCache = new Map(); // signature -> moves array (or null while pending / no data)
+
   function renderEntries(sigInfos){
     if (!sigInfos.length){
       entriesEl.innerHTML = '<div class="empty">No transactions found for this address yet.</div>';
@@ -401,7 +493,9 @@
       const isNew = !firstLoad && !knownSigs.has(info.signature);
       const div = document.createElement('div');
       div.className = 'entry' + (isNew ? ' new' : '');
+      div.dataset.sig = info.signature;
       const ok = !info.err;
+      const cachedMoves = txCache.has(info.signature) ? txCache.get(info.signature) : undefined;
       div.innerHTML = `
         <div class="entry-top">
           <a class="sig" href="https://solscan.io/tx/${info.signature}" target="_blank" rel="noopener">${short(info.signature)}</a>
@@ -412,11 +506,32 @@
           <span>slot ${info.slot ?? '—'}</span>
           ${info.confirmationStatus ? `<span>${info.confirmationStatus}</span>` : ''}
         </div>
+        <div class="entry-moves">${ok ? renderMoves(cachedMoves) : '<span class="move-none">transaction failed on-chain</span>'}</div>
       `;
       entriesEl.appendChild(div);
     });
     knownSigs = new Set(sigInfos.map(i => i.signature));
     firstLoad = false;
+  }
+
+  function updateEntryMoves(signature, moves){
+    txCache.set(signature, moves);
+    const div = entriesEl.querySelector(`[data-sig="${signature}"] .entry-moves`);
+    if (div) div.innerHTML = renderMoves(moves);
+  }
+
+  // Fetch and decode full transaction detail for any signature not already cached.
+  async function hydrateMoves(url, addr, sigInfos){
+    const toFetch = sigInfos.filter(s => !s.err && !txCache.has(s.signature));
+    for (const s of toFetch){
+      try{
+        const tx = await rpcCall(url, 'getTransaction', [s.signature, {encoding:'jsonParsed', maxSupportedTransactionVersion:0}]);
+        const moves = decodeSwap(tx, addr);
+        updateEntryMoves(s.signature, moves);
+      }catch(err){
+        updateEntryMoves(s.signature, null);
+      }
+    }
   }
 
   async function fetchFromEndpoint(url, addr){
@@ -457,6 +572,7 @@
         lastWorkingEndpoint = url;
         setPulse('live');
         clearStatus();
+        hydrateMoves(url, addr, sigInfos || []); // fire-and-forget: fills in "what he bought" per row
         return;
       }catch(err){
         lastErr = err;
