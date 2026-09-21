@@ -1,0 +1,510 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Ledger — Wallet Watch</title>
+<style>
+  :root{
+    --hull:      #10151f;
+    --deck:      #171e2b;
+    --plate:     #1d2636;
+    --line:      #2a3547;
+    --paper:     #e9e4d6;
+    --paper-dim: #9aa3b5;
+    --mustard:   #d9a441;
+    --signal-ok: #6fb98f;
+    --signal-err:#c56a5f;
+    --mono: "SFMono-Regular", "IBM Plex Mono", Menlo, Consolas, monospace;
+    --serif: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+  }
+  *{box-sizing:border-box;}
+  html,body{height:100%;}
+  body{
+    margin:0;
+    background:var(--hull);
+    color:var(--paper);
+    font-family:var(--serif);
+    padding-top:env(safe-area-inset-top,0px);
+    padding-bottom:env(safe-area-inset-bottom,0px);
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:760px;margin:0 auto;padding:28px 20px 60px;}
+
+  header{
+    border-bottom:1px solid var(--line);
+    padding-bottom:18px;
+    margin-bottom:22px;
+    display:flex;
+    justify-content:space-between;
+    align-items:flex-end;
+    gap:16px;
+    flex-wrap:wrap;
+  }
+  h1{
+    font-family:var(--serif);
+    font-weight:400;
+    font-size:1.7rem;
+    margin:0;
+    letter-spacing:0.01em;
+  }
+  h1 em{font-style:italic;color:var(--mustard);}
+  .tagline{color:var(--paper-dim);font-size:0.85rem;margin-top:4px;}
+
+  .pulse{
+    display:flex;
+    align-items:center;
+    gap:8px;
+    font-family:var(--mono);
+    font-size:0.78rem;
+    color:var(--paper-dim);
+  }
+  .dot{
+    width:8px;height:8px;border-radius:50%;
+    background:var(--paper-dim);
+    flex-shrink:0;
+  }
+  .dot.live{background:var(--signal-ok);box-shadow:0 0 0 0 rgba(111,185,143,0.6);animation:beat 2.4s ease-out infinite;}
+  .dot.down{background:var(--signal-err);}
+  @keyframes beat{
+    0%{box-shadow:0 0 0 0 rgba(111,185,143,0.45);}
+    70%{box-shadow:0 0 0 7px rgba(111,185,143,0);}
+    100%{box-shadow:0 0 0 0 rgba(111,185,143,0);}
+  }
+
+  .panel{
+    background:var(--deck);
+    border:1px solid var(--line);
+    border-radius:3px;
+    padding:18px;
+    margin-bottom:18px;
+  }
+  label{
+    display:block;
+    font-family:var(--mono);
+    font-size:0.7rem;
+    letter-spacing:0.04em;
+    color:var(--paper-dim);
+    margin-bottom:6px;
+  }
+  .row{display:flex;gap:10px;flex-wrap:wrap;}
+  .row > div{flex:1;min-width:220px;}
+  input[type="text"], select{
+    width:100%;
+    background:var(--hull);
+    border:1px solid var(--line);
+    color:var(--paper);
+    font-family:var(--mono);
+    font-size:0.85rem;
+    padding:10px 12px;
+    border-radius:2px;
+    outline:none;
+  }
+  input[type="text"]:focus, select:focus{border-color:var(--mustard);}
+  input[type="text"]::placeholder{color:#5a6478;}
+
+  .controls{
+    display:flex;
+    align-items:center;
+    gap:10px;
+    margin-top:14px;
+    flex-wrap:wrap;
+  }
+  button{
+    font-family:var(--mono);
+    font-size:0.78rem;
+    letter-spacing:0.02em;
+    background:var(--mustard);
+    color:#221a08;
+    border:none;
+    padding:10px 16px;
+    border-radius:2px;
+    cursor:pointer;
+    transition:filter .15s ease;
+  }
+  button:hover{filter:brightness(1.08);}
+  button:active{filter:brightness(0.94);}
+  button.ghost{
+    background:transparent;
+    color:var(--paper-dim);
+    border:1px solid var(--line);
+  }
+  button.ghost:hover{color:var(--paper);border-color:var(--paper-dim);}
+  button:disabled{opacity:0.5;cursor:default;}
+
+  .interval-label{font-family:var(--mono);font-size:0.75rem;color:var(--paper-dim);margin-left:auto;}
+
+  .balance-line{
+    font-family:var(--mono);
+    font-size:0.8rem;
+    color:var(--paper-dim);
+    margin-top:12px;
+    padding-top:12px;
+    border-top:1px dashed var(--line);
+  }
+  .balance-line b{color:var(--paper);font-weight:600;}
+
+  .status-msg{
+    font-family:var(--mono);
+    font-size:0.78rem;
+    padding:10px 14px;
+    border-radius:2px;
+    margin-bottom:14px;
+    display:none;
+  }
+  .status-msg.show{display:block;}
+  .status-msg.err{background:rgba(197,106,95,0.12);color:var(--signal-err);border:1px solid rgba(197,106,95,0.35);}
+  .status-msg.info{background:rgba(154,163,181,0.08);color:var(--paper-dim);border:1px solid var(--line);}
+
+  .ledger-head{
+    display:flex;
+    justify-content:space-between;
+    align-items:baseline;
+    margin-bottom:10px;
+  }
+  .ledger-head h2{
+    font-family:var(--serif);
+    font-weight:400;
+    font-size:1.05rem;
+    margin:0;
+    color:var(--paper);
+  }
+  .ledger-head span{
+    font-family:var(--mono);
+    font-size:0.72rem;
+    color:var(--paper-dim);
+  }
+
+  .entry{
+    background:var(--deck);
+    border:1px solid var(--line);
+    border-left:3px solid var(--line);
+    border-radius:2px;
+    padding:14px 16px;
+    margin-bottom:8px;
+    transition:border-color .4s ease, background .4s ease;
+  }
+  .entry.new{
+    border-left-color:var(--mustard);
+    animation:flash 1.8s ease-out;
+  }
+  @keyframes flash{
+    0%{background:rgba(217,164,65,0.14);}
+    100%{background:var(--deck);}
+  }
+  .entry-top{
+    display:flex;
+    justify-content:space-between;
+    align-items:center;
+    gap:10px;
+    margin-bottom:6px;
+  }
+  .sig{
+    font-family:var(--mono);
+    font-size:0.82rem;
+    color:var(--paper);
+    text-decoration:none;
+    border-bottom:1px solid var(--line);
+  }
+  .sig:hover{border-bottom-color:var(--mustard);color:var(--mustard);}
+  .badge{
+    font-family:var(--mono);
+    font-size:0.68rem;
+    letter-spacing:0.03em;
+    padding:3px 8px;
+    border-radius:9px;
+    white-space:nowrap;
+  }
+  .badge.ok{background:rgba(111,185,143,0.14);color:var(--signal-ok);}
+  .badge.err{background:rgba(197,106,95,0.14);color:var(--signal-err);}
+  .entry-meta{
+    font-family:var(--mono);
+    font-size:0.74rem;
+    color:var(--paper-dim);
+    display:flex;
+    gap:16px;
+    flex-wrap:wrap;
+  }
+
+  .empty{
+    font-family:var(--mono);
+    font-size:0.82rem;
+    color:var(--paper-dim);
+    text-align:center;
+    padding:40px 20px;
+    border:1px dashed var(--line);
+    border-radius:3px;
+  }
+
+  footer{
+    margin-top:28px;
+    font-family:var(--mono);
+    font-size:0.7rem;
+    color:#5a6478;
+    line-height:1.6;
+  }
+  footer a{color:var(--paper-dim);}
+
+  @media (max-width:480px){
+    h1{font-size:1.4rem;}
+    .row > div{min-width:100%;}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <div>
+      <h1>Ledger — <em>Wallet Watch</em></h1>
+      <div class="tagline">Polls Solana mainnet directly from your browser. Nothing is stored or sent anywhere else.</div>
+    </div>
+    <div class="pulse"><span class="dot" id="dot"></span><span id="pulseText">idle</span></div>
+  </header>
+
+  <div class="panel">
+    <div class="row">
+      <div>
+        <label for="addr">Wallet address</label>
+        <input type="text" id="addr" value="498g1rVnFcnjBjpfw1xyqA1WvgQXUU8RWuELjxkjAayQ" placeholder="Paste a Solana address" autocomplete="off" spellcheck="false">
+      </div>
+      <div>
+        <label for="rpc">RPC endpoint</label>
+        <select id="rpc">
+          <option value="auto" selected>Auto (try several public nodes)</option>
+          <option value="https://solana.publicnode.com">PublicNode</option>
+          <option value="https://rpc.ankr.com/solana">Ankr</option>
+          <option value="https://api.mainnet-beta.solana.com">Solana Foundation (heavily rate-limited)</option>
+          <option value="custom">Custom endpoint…</option>
+        </select>
+      </div>
+    </div>
+    <div class="row" id="customRpcRow" style="display:none;margin-top:10px;">
+      <div>
+        <label for="customRpc">Custom RPC URL</label>
+        <input type="text" id="customRpc" placeholder="https://your-provider.example/rpc-key">
+      </div>
+    </div>
+
+    <div class="controls">
+      <button id="startBtn">Start watching</button>
+      <button id="stopBtn" class="ghost" disabled>Stop</button>
+      <button id="refreshBtn" class="ghost">Refresh now</button>
+      <span class="interval-label">checks every <select id="interval" style="width:auto;display:inline-block;padding:4px 8px;"><option value="10000">10s</option><option value="15000" selected>15s</option><option value="30000">30s</option><option value="60000">60s</option></select></span>
+    </div>
+
+    <div class="balance-line" id="balanceLine">Balance: —</div>
+  </div>
+
+  <div class="status-msg" id="statusMsg"></div>
+
+  <div class="ledger-head">
+    <h2>Recent activity</h2>
+    <span id="lastUpdated">not started</span>
+  </div>
+
+  <div id="entries">
+    <div class="empty">No transactions loaded yet. Press "Start watching" above.</div>
+  </div>
+
+  <footer>
+    "Auto" tries a few public Solana JSON-RPC nodes in order and sticks with whichever answers, since any single public node can be slow, down, or rate-limited at a given moment.
+    If all of them fail from your network, switch to a personal RPC endpoint (Helius, QuickNode, Ankr, Alchemy, etc.) above — free tiers work fine for polling one address.
+    Signatures link out to Solscan for full transaction detail. This page is a local diagnostic tool, not financial advice.
+  </footer>
+
+</div>
+
+<script>
+(function(){
+  const addrInput = document.getElementById('addr');
+  const rpcSelect = document.getElementById('rpc');
+  const customRpcRow = document.getElementById('customRpcRow');
+  const customRpcInput = document.getElementById('customRpc');
+  const startBtn = document.getElementById('startBtn');
+  const stopBtn = document.getElementById('stopBtn');
+  const refreshBtn = document.getElementById('refreshBtn');
+  const intervalSelect = document.getElementById('interval');
+  const dot = document.getElementById('dot');
+  const pulseText = document.getElementById('pulseText');
+  const statusMsg = document.getElementById('statusMsg');
+  const entriesEl = document.getElementById('entries');
+  const lastUpdatedEl = document.getElementById('lastUpdated');
+  const balanceLine = document.getElementById('balanceLine');
+
+  let timer = null;
+  let knownSigs = new Set();
+  let firstLoad = true;
+  let currentAddr = '';
+
+  const AUTO_ENDPOINTS = [
+    'https://solana.publicnode.com',
+    'https://rpc.ankr.com/solana',
+    'https://api.mainnet-beta.solana.com'
+  ];
+  let lastWorkingEndpoint = null; // remembered across polls when in "auto" mode
+
+  rpcSelect.addEventListener('change', () => {
+    customRpcRow.style.display = rpcSelect.value === 'custom' ? 'flex' : 'none';
+    lastWorkingEndpoint = null;
+  });
+
+  function getRpcUrl(){
+    if (rpcSelect.value === 'custom') {
+      return customRpcInput.value.trim();
+    }
+    return rpcSelect.value; // may be 'auto', a concrete URL is resolved in poll()
+  }
+
+  function showStatus(text, kind){
+    statusMsg.textContent = text;
+    statusMsg.className = 'status-msg show ' + (kind || 'info');
+  }
+  function clearStatus(){
+    statusMsg.className = 'status-msg';
+  }
+
+  function setPulse(state){
+    dot.className = 'dot' + (state === 'live' ? ' live' : state === 'down' ? ' down' : '');
+    pulseText.textContent = state === 'live' ? 'watching' : state === 'down' ? 'error' : 'idle';
+  }
+
+  async function rpcCall(url, method, params){
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({jsonrpc:'2.0', id:1, method, params})
+    });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const json = await res.json();
+    if (json.error) throw new Error(json.error.message || 'RPC error');
+    return json.result;
+  }
+
+  function short(sig){
+    return sig.slice(0,8) + '…' + sig.slice(-8);
+  }
+
+  function fmtTime(blockTime){
+    if (!blockTime) return 'pending';
+    const d = new Date(blockTime * 1000);
+    return d.toLocaleString(undefined, {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit', second:'2-digit'});
+  }
+
+  function renderEntries(sigInfos){
+    if (!sigInfos.length){
+      entriesEl.innerHTML = '<div class="empty">No transactions found for this address yet.</div>';
+      return;
+    }
+    entriesEl.innerHTML = '';
+    sigInfos.forEach(info => {
+      const isNew = !firstLoad && !knownSigs.has(info.signature);
+      const div = document.createElement('div');
+      div.className = 'entry' + (isNew ? ' new' : '');
+      const ok = !info.err;
+      div.innerHTML = `
+        <div class="entry-top">
+          <a class="sig" href="https://solscan.io/tx/${info.signature}" target="_blank" rel="noopener">${short(info.signature)}</a>
+          <span class="badge ${ok ? 'ok' : 'err'}">${ok ? 'success' : 'failed'}</span>
+        </div>
+        <div class="entry-meta">
+          <span>${fmtTime(info.blockTime)}</span>
+          <span>slot ${info.slot ?? '—'}</span>
+          ${info.confirmationStatus ? `<span>${info.confirmationStatus}</span>` : ''}
+        </div>
+      `;
+      entriesEl.appendChild(div);
+    });
+    knownSigs = new Set(sigInfos.map(i => i.signature));
+    firstLoad = false;
+  }
+
+  async function fetchFromEndpoint(url, addr){
+    const [sigInfos, balanceLamports] = await Promise.all([
+      rpcCall(url, 'getSignaturesForAddress', [addr, {limit: 5}]),
+      rpcCall(url, 'getBalance', [addr]).then(r => (r && typeof r.value === 'number') ? r.value : r).catch(() => null)
+    ]);
+    return {sigInfos, balanceLamports};
+  }
+
+  async function poll(){
+    const addr = addrInput.value.trim();
+    const mode = getRpcUrl();
+    if (!addr){ showStatus('Enter a wallet address first.', 'err'); stop(); return; }
+    if (!mode){ showStatus('Enter a custom RPC URL, or switch back to a public endpoint.', 'err'); stop(); return; }
+    currentAddr = addr;
+
+    // Build the list of endpoints to try this round.
+    let candidates;
+    if (mode === 'auto'){
+      candidates = lastWorkingEndpoint
+        ? [lastWorkingEndpoint, ...AUTO_ENDPOINTS.filter(e => e !== lastWorkingEndpoint)]
+        : AUTO_ENDPOINTS;
+    } else {
+      candidates = [mode];
+    }
+
+    let lastErr = null;
+    for (const url of candidates){
+      try{
+        const {sigInfos, balanceLamports} = await fetchFromEndpoint(url, addr);
+        renderEntries(sigInfos || []);
+        lastUpdatedEl.textContent = 'updated ' + new Date().toLocaleTimeString() + (mode === 'auto' ? ' · via ' + url.replace('https://','') : '');
+        if (balanceLamports !== null && balanceLamports !== undefined){
+          const sol = (balanceLamports / 1e9).toLocaleString(undefined, {maximumFractionDigits:5});
+          balanceLine.innerHTML = 'Balance: <b>' + sol + ' SOL</b>';
+        }
+        lastWorkingEndpoint = url;
+        setPulse('live');
+        clearStatus();
+        return;
+      }catch(err){
+        lastErr = err;
+        // try the next candidate
+      }
+    }
+
+    // every candidate failed
+    setPulse('down');
+    lastWorkingEndpoint = null;
+    const hint = mode === 'auto'
+      ? 'Tried ' + candidates.length + ' public nodes and all failed — they may be down or blocking this network. Try a personal RPC URL (Helius, QuickNode, Ankr Premium, etc.) under "Custom endpoint".'
+      : 'Could not reach that RPC: ' + (lastErr ? lastErr.message : 'unknown error') + '. Try "Auto" mode, a different endpoint, or a personal RPC URL.';
+    showStatus(hint, 'err');
+  }
+
+  function start(){
+    if (!addrInput.value.trim()){ showStatus('Enter a wallet address first.', 'err'); return; }
+    firstLoad = true;
+    knownSigs = new Set();
+    startBtn.disabled = true;
+    stopBtn.disabled = false;
+    addrInput.disabled = true;
+    setPulse('live');
+    poll();
+    const ms = parseInt(intervalSelect.value, 10);
+    timer = setInterval(poll, ms);
+  }
+
+  function stop(){
+    if (timer) clearInterval(timer);
+    timer = null;
+    startBtn.disabled = false;
+    stopBtn.disabled = true;
+    addrInput.disabled = false;
+    setPulse('idle');
+  }
+
+  startBtn.addEventListener('click', start);
+  stopBtn.addEventListener('click', stop);
+  refreshBtn.addEventListener('click', poll);
+  intervalSelect.addEventListener('change', () => {
+    if (timer){
+      clearInterval(timer);
+      timer = setInterval(poll, parseInt(intervalSelect.value, 10));
+    }
+  });
+})();
+</script>
+</body>
+</html>
